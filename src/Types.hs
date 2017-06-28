@@ -3,10 +3,9 @@
 module Types
   where
 
-import Network.Socket (Socket)
+import Network.Socket
 import qualified Data.Map as M
 import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
 import qualified Data.ByteString as BS
 import qualified Data.Thyme.Clock as Time
 import qualified Control.Concurrent.STM as STM
@@ -28,9 +27,13 @@ instance Show Timestamp where
 
 data MsgToUser
   = GotMessage RoomName Message
-  | JoinedFrom RoomName
+  | JoinedTo RoomName
   | PartedFrom RoomName
+  | UserJoined Name RoomName
+  | UserParted Name RoomName
+  | UserQuit Name RoomName
   | ErrorMsg ErrorMsg
+  | Welcome Name
   deriving (Show, Eq, Ord)
 
 data ErrorMsg
@@ -39,24 +42,48 @@ data ErrorMsg
   deriving (Show, Eq, Ord)
 
 data User = User
-  { _uName :: Name
-  , _uOutQueue :: STM.TQueue MsgToUser
-  , _uRooms :: [RoomName]
+  { _uName :: !Name
+  , _uOutQueue :: !(STM.TQueue MsgToUser)
+  , _uRooms :: ![RoomName]
+  , _uSocket :: Socket
   }
 
 data Room = Room
-  { _rName  :: RoomName
-  , _rTitle :: T.Text
-  , _rUsers :: STM.TVar (M.Map Name (User, Permission))
+  { _rName  :: !RoomName
+  , _rTitle :: !T.Text
+  , _rUsers :: !(STM.TVar Users)
   --, _rLog   :: [Message]
   }
 
+type Users = M.Map Name (User, Permission)
+
 type RoomName = Name
 
+type ServerState = STM.TVar Server
+
 data Server = Server
-  { rooms :: STM.TVar (M.Map RoomName Room)
-  , users :: STM.TVar (M.Map Name User)
+  { rooms :: !(M.Map RoomName Room)
+  , users :: !(M.Map Name User)
+  , nameVar :: STM.TVar Int
+  , logger :: STM.TQueue String
   }
+
+newServer :: IO ServerState
+newServer = do
+  nv <- STM.newTVarIO 0
+  q  <- STM.newTQueueIO
+  STM.newTVarIO $
+    Server
+      { rooms = mempty
+      , users = mempty
+      , nameVar = nv
+      , logger = q
+      }
+ 
+toLog :: STM.TVar Server -> String -> IO ()
+toLog server msg = STM.atomically $ do
+  l <- logger <$> STM.readTVar server
+  STM.writeTQueue l msg
 
 data Permission
   = Normal
@@ -64,9 +91,8 @@ data Permission
   deriving (Show, Read, Eq, Ord, Enum) -- , NFData)
 
 data Message = Message
-  { _mText :: TL.Text
-  , _mUser :: Name
-  , _mTime :: Timestamp
+  { _mUser :: Name
+  , _mText :: T.Text
   }
-  deriving (Show, Eq, Ord) -- , NFData)
+  deriving (Show, Read, Eq, Ord) -- , NFData)
 

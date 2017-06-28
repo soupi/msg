@@ -1,5 +1,5 @@
 # A messaging server
 
-[![Build Status](https://travis-ci.org/soupi/massage.png)](https://travis-ci.org/soupi/massage)
+[![Build Status](https://travis-ci.org/soupi/msg.png)](https://travis-ci.org/soupi/msg)
 
 I don't know. We'll see!
