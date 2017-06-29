@@ -28,6 +28,7 @@ run = do
   bracket
     (socket (addrFamily serverAddr) Stream defaultProtocol)
     (const (toLog server "\nClosed") <=< close) $ \sock -> do
+      setSocketOption sock ReuseAddr 1
       bind sock (addrAddress serverAddr)
       listen sock 1
       toLog server "Waiting for connections..."
