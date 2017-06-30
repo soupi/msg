@@ -33,6 +33,7 @@ library
     ,stm
     ,async
     ,network
+    ,websockets
     ,cereal
     ,thyme
     ,process

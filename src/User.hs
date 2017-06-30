@@ -9,7 +9,7 @@ import Data.Foldable
 import Control.Arrow
 import Control.Monad
 import Control.Exception
-import Network.Socket (Socket, close)
+import Network.Socket (close)
 import Network.Socket.ByteString
 import qualified Data.Map as M
 import qualified Data.Text as T
@@ -24,22 +24,26 @@ data CommandFromUser
   | Quit
   deriving (Show, Read, Eq, Ord)
 
-sendToUser :: Socket -> ServerState -> User -> IO ()
-sendToUser sock server user = forever $ do
+sendToUser :: ServerState -> User -> IO ()
+sendToUser server user = forever $ do
   msg <- STM.atomically $ STM.readTQueue (_uOutQueue user)
   let bsMsg = BS.pack (show msg) <> "\n"
-  Net.sendAll sock bsMsg
+  case _uSocket user of
+    WebSock _ -> error "WebSockets are not implemented yet."
+    NetSock s -> Net.sendAll s bsMsg
   toLog server $
     (T.unpack (_uName user) ++ " >> " ++ show msg)
 
-receiveFromUser :: Socket -> ServerState -> User -> IO ()
-receiveFromUser socket serverState user = do
-  msg <- recv socket 4096
+receiveFromUser :: ServerState -> User -> IO ()
+receiveFromUser serverState user = do
+  msg <- case _uSocket user of
+    NetSock s -> recv s 4096
+    WebSock _ -> error "WebSockets are not implemented yet."
   case parseCommand msg of
     Nothing -> do
       STM.atomically $
         _uOutQueue user `STM.writeTQueue` ErrorMsg (InvalidCommand msg)
-      receiveFromUser socket serverState user
+      receiveFromUser serverState user
 
     Just cmd -> do
       toLog serverState $
@@ -49,7 +53,7 @@ receiveFromUser socket serverState user = do
           (const False <$> act user serverState cmd)
           (\(SomeException _) -> pure True)
       unless stop $
-        receiveFromUser socket serverState user
+        receiveFromUser serverState user
       
 
 parseCommand :: BS.ByteString -> Maybe CommandFromUser
@@ -104,7 +108,9 @@ userQuit serverState user = do
       server
         { users = M.delete (_uName user) (users server)
         }
-  close (_uSocket user)
+  case _uSocket user of
+    NetSock s -> close s
+    WebSock _ -> pure ()
 
 joinRoom :: RoomName -> User -> STM.TVar Server -> IO ()
 joinRoom room user serverState = STM.atomically $ do

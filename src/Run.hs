@@ -32,37 +32,38 @@ run = do
       bind sock (addrAddress serverAddr)
       listen sock 1
       toLog server "Waiting for connections..."
-      void $ forever $ listener sock server
+      void $ forever $ do
+        (soc, _) <- accept sock
+        forkFinally
+          (listener (NetSock soc) server)
+          (const $ close soc)
 
-listener :: Socket -> ServerState -> IO ()
+listener :: Sock -> ServerState -> IO ()
 listener sock server = do
-  (soc, _) <- accept sock
-  void $ flip forkFinally
-    (const $ close soc) $ do
-      bracket
-        (STM.atomically $ do
-          nvTVar <- nameVar <$> STM.readTVar server
-          nv <- STM.readTVar nvTVar
-          STM.modifyTVar nvTVar (+1)
-          oq <- STM.newTQueue
-          let
-            name = "Guest" <> T.pack (show nv)
-            user = User
-              { _uName = name
-              , _uOutQueue = oq
-              , _uRooms = mempty
-              , _uSocket = soc
-              }
-          oq `STM.writeTQueue` Welcome name
-          STM.modifyTVar server $ \s ->
-            s { users = M.insert name user $ users s }
-          pure user
-        )
-        (const (toLog server "\nClosed User") <=< userQuit server) $ \user -> do
-          joinRoom "Hall" user server
-          Async.race_
-            (sendToUser soc server user)
-            (receiveFromUser soc server user)
+  bracket
+    (STM.atomically $ do
+      nvTVar <- nameVar <$> STM.readTVar server
+      nv <- STM.readTVar nvTVar
+      STM.modifyTVar nvTVar (+1)
+      oq <- STM.newTQueue
+      let
+        name = "Guest" <> T.pack (show nv)
+        user = User
+          { _uName = name
+          , _uOutQueue = oq
+          , _uRooms = mempty
+          , _uSocket = sock
+          }
+      oq `STM.writeTQueue` Welcome name
+      STM.modifyTVar server $ \s ->
+        s { users = M.insert name user $ users s }
+      pure user
+    )
+    (const (toLog server "\nClosed User") <=< userQuit server) $ \user -> do
+      joinRoom "Hall" user server
+      Async.race_
+        (sendToUser server user)
+        (receiveFromUser server user)
 
 runLogger :: STM.TVar Server -> IO ()
 runLogger server = forever $ do

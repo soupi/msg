@@ -4,6 +4,7 @@ module Types
   where
 
 import Network.Socket
+import Network.WebSockets (Connection)
 import qualified Data.Map as M
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
@@ -41,11 +42,15 @@ data ErrorMsg
   | InvalidCommand BS.ByteString
   deriving (Show, Eq, Ord)
 
+data Sock
+  = NetSock Socket
+  | WebSock Connection
+
 data User = User
   { _uName :: !Name
   , _uOutQueue :: !(STM.TQueue MsgToUser)
   , _uRooms :: ![RoomName]
-  , _uSocket :: Socket
+  , _uSocket :: Sock
   }
 
 data Room = Room
