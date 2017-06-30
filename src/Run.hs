@@ -9,16 +9,32 @@ import Control.Exception
 import Data.Monoid
 import Control.Monad
 import Network.Socket
-import Control.Concurrent (forkFinally)
+import qualified Network.WebSockets as WS
 import qualified Data.Map as M
 import qualified Data.Text as T
 import qualified Control.Concurrent.STM as STM
 import qualified Control.Concurrent.Async as Async
+import Control.Concurrent (forkFinally)
 
 run :: IO ()
 run = do
   server <- newServer
-  void $ Async.async $ runLogger server
+  Async.race_
+    (runLogger server)
+    $ Async.race_
+        (netSocketServer server)
+        (webSocketServer server)
+
+webSocketServer :: ServerState -> IO ()
+webSocketServer server = do
+  toLog server "Waiting for web connections..."
+  void $ WS.runServer "0.0.0.0" 8888 $ \pending -> do
+    conn <- WS.acceptRequest pending
+    WS.forkPingThread conn 120
+    listener (WebSock conn) server
+
+netSocketServer :: ServerState -> IO ()
+netSocketServer server = do
   addrInfos <-
     getAddrInfo
     (Just defaultHints{addrFlags = [AI_PASSIVE]})

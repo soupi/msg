@@ -9,6 +9,7 @@ import Data.Foldable
 import Control.Arrow
 import Control.Monad
 import Control.Exception
+import Network.WebSockets (receiveData, sendTextData)
 import Network.Socket (close)
 import Network.Socket.ByteString
 import qualified Data.Map as M
@@ -29,16 +30,17 @@ sendToUser server user = forever $ do
   msg <- STM.atomically $ STM.readTQueue (_uOutQueue user)
   let bsMsg = BS.pack (show msg) <> "\n"
   case _uSocket user of
-    WebSock _ -> error "WebSockets are not implemented yet."
+    WebSock c -> sendTextData c bsMsg
     NetSock s -> Net.sendAll s bsMsg
   toLog server $
-    (T.unpack (_uName user) ++ " >> " ++ show msg)
+    (T.unpack (_uName user) ++ " << " ++ show msg)
 
 receiveFromUser :: ServerState -> User -> IO ()
 receiveFromUser serverState user = do
   msg <- case _uSocket user of
     NetSock s -> recv s 4096
-    WebSock _ -> error "WebSockets are not implemented yet."
+    WebSock c -> receiveData c
+
   case parseCommand msg of
     Nothing -> do
       STM.atomically $
@@ -47,14 +49,13 @@ receiveFromUser serverState user = do
 
     Just cmd -> do
       toLog serverState $
-        (T.unpack (_uName user) ++ " << " ++ show msg)
+        (T.unpack (_uName user) ++ " >> " ++ show msg)
       stop <-
         catch
           (const False <$> act user serverState cmd)
           (\(SomeException _) -> pure True)
       unless stop $
         receiveFromUser serverState user
-      
 
 parseCommand :: BS.ByteString -> Maybe CommandFromUser
 parseCommand = BS.unpack >>> reads >>> \case
