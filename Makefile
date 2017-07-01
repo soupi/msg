@@ -18,17 +18,15 @@ dev:
 test:
 	stack test --fast --test-arguments "-j8"
 
-.PHONY: runc
+.PHONY: runclient
 
-runc:
-	stack exec massage-client
+runclient:
+	stack exec msg-client
 
-runs:
-.PHONY: runs
-	stack exec massage-server
+.PHONY: runserver
 
-run:
-	stack exec 
+runserver:
+	stack exec msg-server
 
 .PHONY: clean
 

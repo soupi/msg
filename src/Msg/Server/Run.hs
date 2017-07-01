@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Run where
+module Msg.Server.Run where
 
-import Types
-import User
+import Msg.Server.Types
+import Msg.Server.User
 
 import Control.Exception
 import Data.Monoid
@@ -80,6 +80,18 @@ listener sock server = do
       Async.race_
         (sendToUser server user)
         (receiveFromUser server user)
+
+newServer :: IO ServerState
+newServer = do
+  nv <- STM.newTVarIO 0
+  q  <- STM.newTQueueIO
+  STM.newTVarIO $
+    Server
+      { rooms = mempty
+      , users = mempty
+      , nameVar = nv
+      , logger = q
+      }
 
 runLogger :: STM.TVar Server -> IO ()
 runLogger server = forever $ do

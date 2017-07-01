@@ -1,6 +1,6 @@
 module Main where
 
-import Run
+import Msg.Server.Run
 
 main :: IO ()
 main = run

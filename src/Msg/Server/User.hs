@@ -1,9 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 
-module User (sendToUser, receiveFromUser, userQuit, joinRoom) where
+module Msg.Server.User
+  ( sendToUser
+  , receiveFromUser
+  , userQuit
+  , joinRoom
+  ) where
 
-import Types
+import Msg.Server.Types
+
 import Data.Monoid
 import Data.Foldable
 import Control.Arrow
@@ -17,13 +23,6 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as BS
 import qualified Control.Concurrent.STM as STM
 import qualified Network.Socket.ByteString as Net
-
-data CommandFromUser
-  = SendMessage RoomName T.Text
-  | Join RoomName
-  | Part RoomName
-  | Quit
-  deriving (Show, Read, Eq, Ord)
 
 sendToUser :: ServerState -> User -> IO ()
 sendToUser server user = forever $ do
