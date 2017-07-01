@@ -121,7 +121,7 @@ joinRoom room user serverState = STM.atomically $ do
 
       NotInRoom r us -> do
         mapM_ (((`STM.writeTQueue` UserJoined (_uName user) room) . _uOutQueue) . fst) us
-        _uOutQueue user `STM.writeTQueue` JoinedTo room
+        _uOutQueue user `STM.writeTQueue` JoinedTo room (M.keys us)
         STM.modifyTVar (_rUsers r) $
           M.insert (_uName user) (user, Normal)
 
@@ -129,7 +129,7 @@ joinRoom room user serverState = STM.atomically $ do
         users <- STM.newTVar $ M.fromList [(_uName user, (user, Admin))]
         let newRoom = Room room "" users
         STM.writeTVar serverState (server { rooms = M.insert room newRoom (rooms server) })
-        _uOutQueue user `STM.writeTQueue` JoinedTo room
+        _uOutQueue user `STM.writeTQueue` JoinedTo room []
 
 
 isUserInRoom :: Server -> User -> RoomName -> STM.STM UserInRoom

@@ -17,7 +17,7 @@ data CommandFromUser
 
 data MsgToUser
   = GotMessage RoomName Message
-  | JoinedTo RoomName
+  | JoinedTo RoomName [Name]
   | PartedFrom RoomName
   | UserJoined Name RoomName
   | UserParted Name RoomName
