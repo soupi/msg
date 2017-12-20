@@ -1,3 +1,6 @@
-# A chat server
+# msg
 
 A toy chat server
+
+![screenshot](screenshot.png)
+
