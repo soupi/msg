@@ -90,7 +90,7 @@ openConn actE = do
           Just (Connection soc) -> liftEff soc.close
         
       Connect -> liftEff do
-        Connection socket <- newWebSocket (URL "ws://echo.websocket.org") []
+        Connection socket <- newWebSocket (URL "wss://echo.websocket.org") []
 
         socket.onopen $= \event -> do
           runIOSync $ do
