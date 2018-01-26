@@ -8,13 +8,16 @@ import Control.Monad.Eff.Var (($=))
 import Control.Monad.IO.Effect (INFINITY)
 import Control.Monad.IOSync (IOSync, runIOSync)
 import Data.Foldable (foldl)
+
+
 import Data.Monoid (mempty)
 import Data.Tuple (Tuple(..))
 import Specular.Dom.Builder.Class (dynText, el, text)
 import Specular.Dom.Node.Class ((:=))
 import Specular.Dom.Widget (class MonadWidget, runMainWidgetInBody)
 import Specular.Dom.Widgets.Button (buttonOnClick)
-import Specular.FRP (Dynamic, Event, attachDynWith, changed, fixFRP, foldDyn, holdDyn, mergeEvents, never, newEvent, subscribeEvent_, weaken)
+import Specular.Dom.Widgets.Input (textInput, textInputValue, textInputValueEventOnEnter)
+import Specular.FRP (Dynamic, Event, attachDynWith, changed, fixFRP, foldDyn, holdDyn, leftmost, mergeEvents, never, newEvent, subscribeEvent_, tagDyn, weaken)
 import WebSocket (Connection(Connection), Message(Message), URL(URL), newWebSocket, runMessage, runMessageEvent)
 
 main :: Eff (infinity :: INFINITY) Unit
@@ -26,13 +29,23 @@ mainWidget = do
   status  <- holdDyn Disconnected statusE.event
   msgsE   <- newEvent
 
-  connectBtn
-    { status:
-      { dyn: status
-      , fire: statusE.fire
+  let
+    state =
+      { status:
+        { dyn: status
+        , fire: statusE.fire
+        }
+      , msgs: msgsE
       }
-    , msgs: msgsE
-    }
+  connectBtn state
+
+  inputE <- inputTextBar state.status.dyn
+  flip subscribeEvent_ (attachDynWith Tuple state.status.dyn inputE) \(Tuple state msg) ->
+    case state of
+      Connected (Connection socket) -> liftEff $ socket.send (Message msg)
+      _ -> pure unit
+
+  el "p" $ dynText <<< weaken <<< map showSockMsg =<< holdDyn SockClose state.msgs.event
 
 data Action
   = Connect
@@ -44,15 +57,6 @@ connectBtn state = do
     fixFRP $ connectButton $ state.status
 
   result <- openConn state connAction
-
-  sendHelloE <- buttonOnClick (pure mempty) (text "Send Hello")
-
-  flip subscribeEvent_ (attachDynWith Tuple state.status.dyn sendHelloE) \(Tuple soc ev) ->
-    case soc of
-      Connected (Connection socket) -> liftEff $ socket.send (Message "hello")
-      _ -> pure unit
-
-  el "p" $ dynText <<< weaken <<< map showSockMsg =<< holdDyn SockClose state.msgs.event
 
   pure unit
 
@@ -125,10 +129,10 @@ openConn :: forall m. MonadWidget m
   -> Event Action
   -> m Unit
 openConn state actE = do
-  flip subscribeEvent_ (attachDynWith Tuple state.status.dyn actE) \(Tuple soc ev) ->
+  flip subscribeEvent_ (attachDynWith Tuple state.status.dyn actE) \(Tuple st ev) ->
     case ev of
       Disconnect ->
-        case soc of
+        case st of
           Connected (Connection soc) -> do
             state.status.fire (WaitClose $ Connection soc)
             liftEff soc.close
@@ -153,4 +157,27 @@ openConn state actE = do
 
   pure unit
 
+-- | An input text bar
+--
+inputTextBar :: forall m. MonadWidget m => Dynamic Status -> m (Event String)
+inputTextBar status = el "div" $ do
+  txtE <- fixFRP $ \omega -> do
+    let
+      enableBtn = weaken $ flip map status case _ of
+        Connected _ -> mempty
+        _ -> "disabled" := show true
 
+    txt <- textInput
+      { initialValue: ""
+      , attributes: enableBtn
+      , setValue: "" <$ omega.setE
+      }
+
+    setKeyE <- buttonOnClick enableBtn $ text "Send"
+
+    setEnterE <- textInputValueEventOnEnter txt
+    let setE = leftmost [setKeyE, unit <$ setEnterE]
+
+    pure (Tuple {setE} $ tagDyn (textInputValue txt) setE)
+
+  pure txtE
