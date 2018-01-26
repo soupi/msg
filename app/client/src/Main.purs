@@ -8,23 +8,20 @@ import Control.Monad.Eff.Var (($=))
 import Control.Monad.IO.Effect (INFINITY)
 import Control.Monad.IOSync (IOSync, runIOSync)
 import Data.Foldable (foldl)
-
-
 import Data.Monoid (mempty)
 import Data.Tuple (Tuple(..))
-import Specular.Dom.Builder.Class (dynText, el, text)
+import Specular.Dom.Builder.Class (dynText, el, elAttr, text)
 import Specular.Dom.Node.Class ((:=))
 import Specular.Dom.Widget (class MonadWidget, runMainWidgetInBody)
 import Specular.Dom.Widgets.Button (buttonOnClick)
 import Specular.Dom.Widgets.Input (textInput, textInputValue, textInputValueEventOnEnter)
-import Specular.FRP (Dynamic, Event, attachDynWith, changed, fixFRP, foldDyn, holdDyn, leftmost, mergeEvents, never, newEvent, subscribeEvent_, tagDyn, weaken)
+import Specular.FRP (Dynamic, Event, attachDynWith, changed, dynamic, fixFRP, foldDyn, holdDyn, leftmost, mergeEvents, never, newEvent, subscribeEvent_, tagDyn, weaken)
 import WebSocket (Connection(Connection), Message(Message), URL(URL), newWebSocket, runMessage, runMessageEvent)
 
-main :: Eff (infinity :: INFINITY) Unit
-main = runIOSync $ runMainWidgetInBody mainWidget
+foreign import scrollMessages :: forall e. Eff (infinity :: INFINITY | e) Unit
 
-mainWidget :: forall m. MonadWidget m => m Unit
-mainWidget = do
+main :: Eff (infinity :: INFINITY) Unit
+main = runIOSync $ runMainWidgetInBody do
   statusE <- newEvent
   status  <- holdDyn Disconnected statusE.event
   msgsE   <- newEvent
@@ -37,6 +34,10 @@ mainWidget = do
         }
       , msgs: msgsE
       }
+  mainWidget state
+
+mainWidget :: forall m. MonadWidget m => State -> m Unit
+mainWidget state = do
   connectBtn state
 
   inputE <- inputTextBar state.status.dyn
@@ -45,7 +46,26 @@ mainWidget = do
       Connected (Connection socket) -> liftEff $ socket.send (Message msg)
       _ -> pure unit
 
+  messagesWidget state
+
   el "p" $ dynText <<< weaken <<< map showSockMsg =<< holdDyn SockClose state.msgs.event
+
+messagesWidget :: forall m. MonadWidget m => State -> m Unit
+messagesWidget state = do
+  messages <- foldDyn ($) (pure unit) $ flip map state.msgs.event case _ of
+    SockMsg msg -> \msgs -> do
+      msgs
+      el "li" (text msg)
+    SockOpen -> const $ pure unit
+    _ -> id
+
+  _ <- elAttr "ul" ("id" := "messages" <> "style" := messagesStyle) $ dynamic messages
+
+  flip subscribeEvent_ state.msgs.event \msg ->
+    case msg of
+      SockMsg _ -> liftEff do
+        scrollMessages
+      _ -> pure unit
 
 data Action
   = Connect
@@ -181,3 +201,13 @@ inputTextBar status = el "div" $ do
     pure (Tuple {setE} $ tagDyn (textInputValue txt) setE)
 
   pure txtE
+
+messagesStyle :: String
+messagesStyle = """
+list-style-type: none;
+height: 80%;
+width: 50%;
+overflow: auto;
+border: 1px solid #eee;
+// display: flex; flex-direction: column-reverse; // doesn't work for firefox
+"""
