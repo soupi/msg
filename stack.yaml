@@ -2,6 +2,5 @@ flags: {}
 extra-package-dbs: []
 packages:
 - '.'
-extra-deps:
-- containers-0.5.10.2
-resolver: lts-8.18
+extra-deps: []
+resolver: lts-10.3
