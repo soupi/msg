@@ -16,7 +16,8 @@ import Specular.Dom.Widget (class MonadWidget, runMainWidgetInBody)
 import Specular.Dom.Widgets.Button (buttonOnClick)
 import Specular.Dom.Widgets.Input (textInput, textInputValue, textInputValueEventOnEnter)
 import Specular.FRP (Dynamic, Event, attachDynWith, changed, dynamic, fixFRP, foldDyn, holdDyn, leftmost, mergeEvents, never, newEvent, subscribeEvent_, tagDyn, weaken)
-import WebSocket (Connection(Connection), Message(Message), URL(URL), newWebSocket, runMessage, runMessageEvent)
+import WebSocket (Connection(Connection), URL(URL), newWebSocket, runMessage, runMessageEvent)
+import WebSocket (Message(Message)) as WS
 
 foreign import scrollMessages :: forall e. Eff (infinity :: INFINITY | e) Unit
 
@@ -43,7 +44,7 @@ mainWidget state = do
   inputE <- inputTextBar state.status.dyn
   flip subscribeEvent_ (attachDynWith Tuple state.status.dyn inputE) \(Tuple state msg) ->
     case state of
-      Connected (Connection socket) -> liftEff $ socket.send (Message msg)
+      Connected (Connection socket) -> liftEff $ socket.send (WS.Message $ ppCmdFromUser $ SendMessage "Hall" msg)
       _ -> pure unit
 
   messagesWidget state
@@ -87,11 +88,13 @@ connectButton :: forall m. MonadWidget m
 connectButton status omega = do
 
       let
-        flipAction _ = case _ of
-          Disconnect -> Connect
-          Connect -> Disconnect
+        chooseAction st _ = case st of
+          Disconnected -> Connect
+          Connected _  -> Disconnect
+          _  -> Connect
 
-      action <- foldDyn flipAction Disconnect omega.connectE
+      action <- holdDyn Disconnect
+        $ attachDynWith chooseAction status.dyn omega.connectE
 
       let
         enableBtn status = case status of
@@ -202,11 +205,66 @@ inputTextBar status = el "div" $ do
 
   pure txtE
 
+type RoomName = String
+type Name = String
+
+
+data CommandFromUser
+  = SendMessage RoomName String
+  | Join RoomName
+  | Part RoomName
+  | Quit
+
+ppCmdFromUser :: CommandFromUser -> String
+ppCmdFromUser = case _ of
+  SendMessage r s -> "SendMessage " <> show r <> " " <> show s
+  Join r -> "Join " <> show r
+  Part r -> "Part " <> show r
+  Quit -> "Quit"
+
+data MsgToUser
+  = GotMessage RoomName Message
+  | JoinedTo RoomName (Array Name)
+  | PartedFrom RoomName
+  | UserJoined Name RoomName
+  | UserParted Name RoomName
+  | UserQuit Name RoomName
+  | ErrorMsg ErrorMsg
+  | Welcome Name
+
+
+ppMsgToUser :: MsgToUser -> String
+ppMsgToUser = case _ of
+  GotMessage r m -> "GotMessage " <> show r <> " " <> ppMsg m
+  JoinedTo r names -> "JoinedTo " <> show r <> " " <> show names
+  PartedFrom r -> "PartedFrom " <> show r
+  UserJoined n r -> "UserJoined " <> show n <> " " <> show r
+  UserParted n r -> "UserParted " <> show n <> " " <> show r
+  UserQuit n r -> "UserQuit " <> show n <> " " <> show r
+  ErrorMsg err -> "ErrorMsg " <> ppErrorMsg err
+  Welcome name -> "Welcome " <> name
+
+
+data Message = Message Name String
+
+ppMsg :: Message -> String
+ppMsg (Message n s) = "Message " <> show n <> " " <> show s
+
+data ErrorMsg
+  = Error String
+  | InvalidCommand String
+
+ppErrorMsg :: ErrorMsg -> String
+ppErrorMsg = case _ of
+  Error s -> "Error " <> s
+  InvalidCommand s -> "InvalidCommand " <> s
+
 messagesStyle :: String
 messagesStyle = """
 list-style-type: none;
-height: 80%;
-width: 50%;
+height: 50%;
+width: 80%;
+min-width: 500px;
 overflow: auto;
 border: 1px solid #eee;
 // display: flex; flex-direction: column-reverse; // doesn't work for firefox
