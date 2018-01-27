@@ -5,17 +5,24 @@ import Prelude
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Class (liftEff)
 import Control.Monad.Eff.Var (($=))
+import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Effect (INFINITY)
 import Control.Monad.IOSync (IOSync, runIOSync)
-import Data.Foldable (foldl)
+import Data.Array (uncons)
+import Data.Either (Either(..))
+import Data.Foldable (fold, foldl, length)
+import Data.Foreign (renderForeignError)
+import Data.Maybe (Maybe(..))
 import Data.Monoid (mempty)
 import Data.Tuple (Tuple(..))
+import JSON (foreignValue)
 import Specular.Dom.Builder.Class (dynText, el, elAttr, text)
 import Specular.Dom.Node.Class ((:=))
 import Specular.Dom.Widget (class MonadWidget, runMainWidgetInBody)
 import Specular.Dom.Widgets.Button (buttonOnClick)
 import Specular.Dom.Widgets.Input (textInput, textInputValue, textInputValueEventOnEnter)
 import Specular.FRP (Dynamic, Event, attachDynWith, changed, dynamic, fixFRP, foldDyn, holdDyn, leftmost, mergeEvents, never, newEvent, subscribeEvent_, tagDyn, weaken)
+import Types (CommandFromUser(..), ErrorMsg(..), Message(..), MsgToUser(..), ppCmdFromUser, ppErrorMsg, ppMsgToUser, readMsgToUser)
 import WebSocket (Connection(Connection), URL(URL), newWebSocket, runMessage, runMessageEvent)
 import WebSocket (Message(Message)) as WS
 
@@ -54,9 +61,42 @@ mainWidget state = do
 messagesWidget :: forall m. MonadWidget m => State -> m Unit
 messagesWidget state = do
   messages <- foldDyn ($) (pure unit) $ flip map state.msgs.event case _ of
-    SockMsg msg -> \msgs -> do
-      msgs
-      el "li" (text msg)
+    SockMsg msg' -> case msg' of
+     Welcome name -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "*** Welcome! You are now known as: " <> name <> "."
+     GotMessage _ (Message name msg) -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "<" <> name <> "> " <> msg 
+     JoinedTo room users -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "* You joined to #" <> room <> ". "
+            <> if length users == 0
+                  then "You are the first one here."
+                  else "Say hello to: " <> commas users
+     PartedFrom room -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "* You parted from #" <> room <> "."
+     UserJoined user room -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "* " <> user <> " joined to #" <> room <> "."
+     UserParted user room -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "* " <> user <> " parted from #" <> room <> "."
+     UserQuit user _ -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "* " <> user <> " quit."
+     ErrorMsg err -> 
+        \msgs -> do
+          msgs
+          el "li" $ text $ "*** Error: " <> ppErrorMsg err
     SockOpen -> const $ pure unit
     _ -> id
 
@@ -86,37 +126,36 @@ connectButton :: forall m. MonadWidget m
   -> { connectE :: Event Unit }
   -> m (Tuple { connectE :: Event Unit } (Event Action))
 connectButton status omega = do
+  let
+    chooseAction st _ = case st of
+      Disconnected -> Connect
+      Connected _  -> Disconnect
+      _  -> Connect
 
-      let
-        chooseAction st _ = case st of
-          Disconnected -> Connect
-          Connected _  -> Disconnect
-          _  -> Connect
+  action <- holdDyn Disconnect
+    $ attachDynWith chooseAction status.dyn omega.connectE
 
-      action <- holdDyn Disconnect
-        $ attachDynWith chooseAction status.dyn omega.connectE
+  let
+    enableBtn status = case status of
+      Disconnected -> mempty
+      Connected _ -> mempty
+      WaitClose _ -> "disabled" := show true
+      WaitOpen -> "disabled" := show true
 
-      let
-        enableBtn status = case status of
-          Disconnected -> mempty
-          Connected _ -> mempty
-          WaitClose _ -> "disabled" := show true
-          WaitOpen -> "disabled" := show true
+  connectE <- buttonOnClick (weaken $ map enableBtn status.dyn) do
+    dynText $ weaken $ flip map status.dyn case _ of
+      Disconnected -> "Connect"
+      Connected _ -> "Disconnect"
+      WaitClose _ -> "Wait..."
+      WaitOpen -> "Wait..."
+    pure unit
 
-      connectE <- buttonOnClick (weaken $ map enableBtn status.dyn) do
-        dynText $ weaken $ flip map status.dyn case _ of
-          Disconnected -> "Connect"
-          Connected _ -> "Disconnect"
-          WaitClose _ -> "Wait..."
-          WaitOpen -> "Wait..."
-        pure unit
+  flip subscribeEvent_ (attachDynWith Tuple status.dyn connectE) \(Tuple stat _) ->
+    case stat of
+      Disconnected -> status.fire WaitOpen
+      _ -> pure unit
 
-      flip subscribeEvent_ (attachDynWith Tuple status.dyn connectE) \(Tuple stat _) ->
-        case stat of
-          Disconnected -> status.fire WaitOpen
-          _ -> pure unit
-
-      pure $ Tuple {connectE} (changed action)
+  pure $ Tuple {connectE} (changed action)
 
 
 compose2 :: forall a b c. (b -> c) -> (a -> a -> b) -> a -> a -> c
@@ -128,13 +167,13 @@ foldlEvents f = foldl (mergeEvents pure pure (compose2 pure f)) never
 data SockMsg
   = SockOpen
   | SockClose
-  | SockMsg String
+  | SockMsg MsgToUser
 
 showSockMsg :: SockMsg -> String
 showSockMsg = case _ of
   SockOpen -> "SockOpen"
   SockClose -> "SockClose"
-  SockMsg str -> "SockMsg " <> str
+  SockMsg str -> "SockMsg " <> ppMsgToUser str
 
 data Status
   = Connected Connection
@@ -162,7 +201,7 @@ openConn state actE = do
           _ -> pure unit
 
       Connect -> liftEff do
-        Connection socket <- newWebSocket (URL "wss://echo.websocket.org") []
+        Connection socket <- newWebSocket (URL "ws://localhost:8888") []
 
         socket.onopen $= \event -> do
           runIOSync $ do
@@ -171,7 +210,18 @@ openConn state actE = do
 
         socket.onmessage $= \event -> do
           let received = runMessage (runMessageEvent event)
-          runIOSync $ state.msgs.fire $ SockMsg received
+          case runExcept $ readMsgToUser =<< foreignValue received of
+            Right msg ->
+              runIOSync $ state.msgs.fire $ SockMsg msg
+            Left err ->
+              runIOSync
+                <<< state.msgs.fire
+                <<< SockMsg
+                <<< ErrorMsg
+                <<< ProtocolError
+                <<< fold
+                <<< map renderForeignError
+                  $ err
 
         socket.onclose $= \event -> do
           runIOSync $ do
@@ -192,11 +242,11 @@ inputTextBar status = el "div" $ do
 
     txt <- textInput
       { initialValue: ""
-      , attributes: enableBtn
+      , attributes: map (_ <> "style" := "width: 73%") enableBtn
       , setValue: "" <$ omega.setE
       }
 
-    setKeyE <- buttonOnClick enableBtn $ text "Send"
+    setKeyE <- buttonOnClick ((_ <> "style" := "width: 8%") <$> enableBtn) $ text "Send"
 
     setEnterE <- textInputValueEventOnEnter txt
     let setE = leftmost [setKeyE, unit <$ setEnterE]
@@ -205,59 +255,11 @@ inputTextBar status = el "div" $ do
 
   pure txtE
 
-type RoomName = String
-type Name = String
-
-
-data CommandFromUser
-  = SendMessage RoomName String
-  | Join RoomName
-  | Part RoomName
-  | Quit
-
-ppCmdFromUser :: CommandFromUser -> String
-ppCmdFromUser = case _ of
-  SendMessage r s -> "SendMessage " <> show r <> " " <> show s
-  Join r -> "Join " <> show r
-  Part r -> "Part " <> show r
-  Quit -> "Quit"
-
-data MsgToUser
-  = GotMessage RoomName Message
-  | JoinedTo RoomName (Array Name)
-  | PartedFrom RoomName
-  | UserJoined Name RoomName
-  | UserParted Name RoomName
-  | UserQuit Name RoomName
-  | ErrorMsg ErrorMsg
-  | Welcome Name
-
-
-ppMsgToUser :: MsgToUser -> String
-ppMsgToUser = case _ of
-  GotMessage r m -> "GotMessage " <> show r <> " " <> ppMsg m
-  JoinedTo r names -> "JoinedTo " <> show r <> " " <> show names
-  PartedFrom r -> "PartedFrom " <> show r
-  UserJoined n r -> "UserJoined " <> show n <> " " <> show r
-  UserParted n r -> "UserParted " <> show n <> " " <> show r
-  UserQuit n r -> "UserQuit " <> show n <> " " <> show r
-  ErrorMsg err -> "ErrorMsg " <> ppErrorMsg err
-  Welcome name -> "Welcome " <> name
-
-
-data Message = Message Name String
-
-ppMsg :: Message -> String
-ppMsg (Message n s) = "Message " <> show n <> " " <> show s
-
-data ErrorMsg
-  = Error String
-  | InvalidCommand String
-
-ppErrorMsg :: ErrorMsg -> String
-ppErrorMsg = case _ of
-  Error s -> "Error " <> s
-  InvalidCommand s -> "InvalidCommand " <> s
+commas :: Array String -> String
+commas words = case uncons words of
+  Nothing -> ""
+  Just { head, tail } ->
+    foldl (\rest next -> rest <> ", " <> next) head tail
 
 messagesStyle :: String
 messagesStyle = """
@@ -267,5 +269,7 @@ width: 80%;
 min-width: 500px;
 overflow: auto;
 border: 1px solid #eee;
-// display: flex; flex-direction: column-reverse; // doesn't work for firefox
+padding-top: 10px;
+padding-left: 10px;
+/* display: flex; flex-direction: column-reverse; doesn't work for firefox */
 """

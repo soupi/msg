@@ -28,18 +28,11 @@ library
     ,containers
     ,text
     ,bytestring
-    ,transformers
-    ,mtl
+    ,aeson
     ,stm
     ,async
     ,network
     ,websockets
-    ,cereal
-    ,thyme
-    ,process
-    ,typed-process
-    ,optparse-applicative
-    ,syb
 
   default-extensions:
       ConstraintKinds

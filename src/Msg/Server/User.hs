@@ -10,12 +10,14 @@ module Msg.Server.User
 
 import Msg.Server.Types
 
+import Data.Aeson (toEncoding)
+import Data.Aeson.Encoding (encodingToLazyByteString)
 import Data.Monoid
 import Data.Foldable
 import Control.Arrow
 import Control.Monad
 import Control.Exception
-import Network.WebSockets (receiveData, sendTextData)
+import Network.WebSockets (receiveData, sendTextData, fromLazyByteString)
 import Network.Socket (close)
 import Network.Socket.ByteString
 import qualified Data.Map as M
@@ -27,10 +29,19 @@ import qualified Network.Socket.ByteString as Net
 sendToUser :: ServerState -> User -> IO ()
 sendToUser server user = forever $ do
   msg <- STM.atomically $ STM.readTQueue (_uOutQueue user)
-  let bsMsg = BS.pack (show msg) <> "\n"
   case _uSocket user of
-    WebSock c -> sendTextData c bsMsg
-    NetSock s -> Net.sendAll s bsMsg
+    WebSock c -> do
+      let
+        bsMsg :: BS.ByteString
+        bsMsg =
+          fromLazyByteString
+          . encodingToLazyByteString
+          . toEncoding
+          $ msg
+      sendTextData c bsMsg
+    NetSock s -> do
+      let bsMsg = BS.pack (show msg) <> "\n"
+      Net.sendAll s bsMsg
   toLog server $
     (T.unpack (_uName user) ++ " << " ++ show msg)
 
