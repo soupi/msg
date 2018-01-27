@@ -99,7 +99,7 @@ userQuit serverState user = do
 
     for_ (rooms server) $ \r -> do
       users <- STM.readTVar (_rUsers r)
-      let (userDeleted, users') = deleted (_uName user) users
+      let (userDeleted, users') = delete (_uName user) users
       STM.writeTVar (_rUsers r) users'
       when userDeleted $
         mapM_ (((`STM.writeTQueue` UserQuit (_uName user) (_rName r)) . _uOutQueue) . fst) users'
@@ -148,5 +148,5 @@ data UserInRoom
   | NotInRoom Room Users
   | RoomDoesNotExist
 
-deleted :: Ord k => k -> M.Map k v -> (Bool, M.Map k v)
-deleted = M.alterF (maybe (False, Nothing) ((True,) . pure))
+delete :: T.Text -> M.Map T.Text v -> (Bool, M.Map T.Text v)
+delete k m = (maybe False (const True) $ M.lookup k m, M.delete k m)
