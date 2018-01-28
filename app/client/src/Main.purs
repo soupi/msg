@@ -8,13 +8,13 @@ import Control.Monad.Eff.Var (($=))
 import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Effect (INFINITY)
 import Control.Monad.IOSync (IOSync, runIOSync)
-import Data.Array (uncons)
+import Data.Array (delete, sort, uncons, (:))
 import Data.Either (Either(..))
 import Data.Foldable (fold, foldl, length)
 import Data.Foreign (renderForeignError)
 import Data.Maybe (Maybe(..))
 import Data.Monoid (mempty)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), snd)
 import JSON (foreignValue)
 import Specular.Dom.Builder.Class (dynText, el, elAttr, text)
 import Specular.Dom.Node.Class ((:=))
@@ -47,14 +47,11 @@ main = runIOSync $ runMainWidgetInBody do
 mainWidget :: forall m. MonadWidget m => State -> m Unit
 mainWidget state = do
   connectBtn state
-
-  inputE <- inputTextBar state.status.dyn
-  flip subscribeEvent_ (attachDynWith Tuple state.status.dyn inputE) \(Tuple state msg) ->
-    case state of
-      Connected (Connection socket) -> liftEff $ socket.send (WS.Message $ ppCmdFromUser $ SendMessage "Hall" msg)
-      _ -> pure unit
-
-  messagesWidget state
+  el "div" do
+    elAttr "div" ("style" := "display: flex; height: 80%;") do
+      messagesWidget state
+      nickListWidget state
+    void $ inputTextBar state.status.dyn
 
   el "p" $ dynText <<< weaken <<< map showSockMsg =<< holdDyn SockClose state.msgs.event
 
@@ -62,38 +59,38 @@ messagesWidget :: forall m. MonadWidget m => State -> m Unit
 messagesWidget state = do
   messages <- foldDyn ($) (pure unit) $ flip map state.msgs.event case _ of
     SockMsg msg' -> case msg' of
-     Welcome name -> 
+      Welcome name ->
         \msgs -> do
           msgs
           el "li" $ text $ "*** Welcome! You are now known as: " <> name <> "."
-     GotMessage _ (Message name msg) -> 
+      GotMessage _ (Message name msg) ->
         \msgs -> do
           msgs
           el "li" $ text $ "<" <> name <> "> " <> msg 
-     JoinedTo room users -> 
+      JoinedTo room users ->
         \msgs -> do
           msgs
           el "li" $ text $ "* You joined to #" <> room <> ". "
             <> if length users == 0
                   then "You are the first one here."
                   else "Say hello to: " <> commas users
-     PartedFrom room -> 
+      PartedFrom room ->
         \msgs -> do
           msgs
           el "li" $ text $ "* You parted from #" <> room <> "."
-     UserJoined user room -> 
+      UserJoined user room ->
         \msgs -> do
           msgs
           el "li" $ text $ "* " <> user <> " joined to #" <> room <> "."
-     UserParted user room -> 
+      UserParted user room ->
         \msgs -> do
           msgs
           el "li" $ text $ "* " <> user <> " parted from #" <> room <> "."
-     UserQuit user _ -> 
+      UserQuit user _ ->
         \msgs -> do
           msgs
           el "li" $ text $ "* " <> user <> " quit."
-     ErrorMsg err -> 
+      ErrorMsg err ->
         \msgs -> do
           msgs
           el "li" $ text $ "*** Error: " <> ppErrorMsg err
@@ -107,6 +104,7 @@ messagesWidget state = do
       SockMsg _ -> liftEff do
         scrollMessages
       _ -> pure unit
+
 
 data Action
   = Connect
@@ -242,7 +240,7 @@ inputTextBar status = el "div" $ do
 
     txt <- textInput
       { initialValue: ""
-      , attributes: map (_ <> "style" := "width: 73%") enableBtn
+      , attributes: map (_ <> "style" := "width: 90%") enableBtn
       , setValue: "" <$ omega.setE
       }
 
@@ -253,7 +251,53 @@ inputTextBar status = el "div" $ do
 
     pure (Tuple {setE} $ tagDyn (textInputValue txt) setE)
 
+  flip subscribeEvent_ (attachDynWith Tuple status txtE) \(Tuple state msg) ->
+    case state of
+      Connected (Connection socket) -> liftEff $ socket.send (WS.Message $ ppCmdFromUser $ SendMessage "Hall" msg)
+      _ -> pure unit
+
   pure txtE
+
+
+nickListWidget :: forall m. MonadWidget m => State -> m Unit
+nickListWidget state = do
+  nicks <- foldDyn ($) (Tuple "" []) $ flip map state.msgs.event case _ of
+    SockMsg msg' -> case msg' of
+      Welcome user ->
+        const $ Tuple user []
+
+      JoinedTo room users ->
+        \(Tuple me _) -> Tuple me $ sort (me : users)
+
+      PartedFrom room ->
+        \(Tuple me _) -> Tuple me []
+
+      UserJoined user room ->
+        \(Tuple me users) -> Tuple me $ sort (user : users)
+
+      UserParted user room ->
+        \(Tuple me users) -> Tuple me $ delete user users
+
+      UserQuit user _ ->
+        \(Tuple me users) -> Tuple me $ delete user users
+
+      _ -> id
+
+    SockClose ->
+      const $ Tuple "" []
+    _ -> id
+
+  let
+    nickList =
+      map
+        ( foldl (*>) (pure unit)
+          <<< map (el "li" <<< text)
+          <<< snd
+        ) nicks
+
+  void $ elAttr "ul" ("id" := "nickList" <> "style" := nickListStyle) $ dynamic nickList
+
+
 
 commas :: Array String -> String
 commas words = case uncons words of
@@ -264,12 +308,22 @@ commas words = case uncons words of
 messagesStyle :: String
 messagesStyle = """
 list-style-type: none;
-height: 50%;
-width: 80%;
+width: 70%;
 min-width: 500px;
 overflow: auto;
 border: 1px solid #eee;
 padding-top: 10px;
 padding-left: 10px;
 /* display: flex; flex-direction: column-reverse; doesn't work for firefox */
+"""
+
+nickListStyle :: String
+nickListStyle = """
+list-style-type: none;
+width: 25%;
+min-width: 100px;
+overflow: auto;
+border: 1px solid #eee;
+padding-top: 10px;
+padding-left: 10px;
 """
