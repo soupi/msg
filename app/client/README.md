@@ -2,6 +2,8 @@
 
 A  [purescript-specular](https://github.com/restaumatic/purescript-specular) based client for [msg](https://github.com/soupi/msg).
 
+![screenshot](client.png)
+
 Compile with:
 
 ```sh

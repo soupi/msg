@@ -1,6 +1,5 @@
 # msg
 
-A toy chat server
+A toy chat server and [client](app/client).
 
-![screenshot](screenshot.png)
 
